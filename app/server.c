@@ -6,6 +6,13 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <pthread.h>
+
+#define MAX_CONCURRENT_CLIENTS 5
+
+pthread_mutex_t accept_mutex;
+
+void* accept_connection(void*);
 
 int main() {
 	// Disable output buffering
@@ -16,8 +23,7 @@ int main() {
 	printf("Logs from your program will appear here!\n");
 
 	// Uncomment this block to pass the first stage
-	int server_fd, client_addr_len;
-	struct sockaddr_in client_addr;
+	int server_fd;
 	
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1) {
@@ -48,21 +54,54 @@ int main() {
 		printf("Listen failed: %s \n", strerror(errno));
 		return 1;
 	}
+	
+	pthread_mutex_init(&accept_mutex, NULL);
 
-	printf("Waiting for a client to connect...\n");
-	client_addr_len = sizeof(client_addr);
+	pthread_t thread_pool[MAX_CONCURRENT_CLIENTS];
+	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
+		pthread_t thread;
+		pthread_attr_t thread_attr;
 
-	int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
-	printf("Client connected\n");
+		pthread_attr_init(&thread_attr);
+		pthread_attr_setscope(&thread_attr, PTHREAD_SCOPE_SYSTEM);
 
-	char buffer[1024];
-	while (read(client_fd, buffer, 1024) > 0) {
-		send(client_fd, "+PONG\r\n", 7, 0);
+		pthread_create(&thread, &thread_attr, accept_connection, &server_fd);
+		thread_pool[i] = thread;
+
+		pthread_attr_destroy(&thread_attr);
 	}
 
+	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
+		pthread_join(thread_pool[i], NULL);
+	}
 
-	close(client_fd);
 	close(server_fd);
 
 	return 0;
+}
+
+void* accept_connection(void* server_fd_ptr) {
+	int server_fd = *(int*)(server_fd_ptr);
+
+	struct sockaddr_in client_addr;
+	int client_addr_len = sizeof(client_addr);
+
+	while (1) {
+		printf("Waiting for a client to connect...\n");
+
+		pthread_mutex_lock(&accept_mutex);
+		int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
+		pthread_mutex_unlock(&accept_mutex);
+
+		printf("Client connected\n");
+
+		char buffer[1024];
+		while (read(client_fd, buffer, 1024) > 0) {
+			send(client_fd, "+PONG\r\n", 7, 0);
+		}
+
+		close(client_fd);
+	}
+
+	return NULL;
 }
