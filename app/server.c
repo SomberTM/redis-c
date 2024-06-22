@@ -55,7 +55,20 @@ int main() {
 	int conn_fd = accept(server_fd, (struct sockaddr *) &client_addr, &client_addr_len);
 	printf("Client connected\n");
 
-	write(conn_fd, "+PONG\r\n", 7);
+	unsigned char c;
+	char command[256];
+	char command_length = 0;
+
+	while ((n = read(conn_fd, &c, sizeof(c))) > 0) {
+		if (c == '\n') {
+			write(conn_fd, "+PONG\r\n", 7);
+			continue;
+		}
+
+		command[command_length] = c;
+		command_length++;
+	}
+
 
 	close(conn_fd);
 	close(server_fd);
