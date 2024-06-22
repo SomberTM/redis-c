@@ -59,7 +59,7 @@ int main() {
 	char command[256];
 	char command_length = 0;
 
-	while ((n = read(conn_fd, &c, sizeof(c))) > 0) {
+	while (read(conn_fd, &c, sizeof(c)) > 0) {
 		if (c == '\n') {
 			write(conn_fd, "+PONG\r\n", 7);
 			continue;
