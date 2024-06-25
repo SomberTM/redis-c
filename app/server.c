@@ -89,6 +89,19 @@ char* to_upper(char* src) {
 	return src;
 }
 
+void raw_print(char* str) {
+	while (*str) {
+		if (*str == '\r') {
+			printf("\\r");
+		} else if (*str == '\n') {
+			printf("\\n");
+		} else {
+			putchar(*str);
+		}
+		str++;
+	}
+}
+
 void* accept_connection(void* server_fd_ptr) {
 	int server_fd = *(int*)(server_fd_ptr);
 
@@ -105,21 +118,34 @@ void* accept_connection(void* server_fd_ptr) {
 		printf("Client connected\n");
 
 		char buffer[1024];
-		/*
-		while (read(client_fd, buffer, 1024) > 0) {
-		}
-		*/
 		int n = read(client_fd, buffer, 1024);
 		buffer[n] = '\0';
 
+		/*
+		printf("Received bytes: ");
+		raw_print(buffer);
+		printf("\n");
+		*/
+
 		RespParser* parser = create_resp_parser(buffer);
+
+		/*
+		printf("Raw (%d) [", parser->items_length);
+		for (size_t i = 0; i < parser->items_length; i++) {
+			printf("%s", parser->items[i]);
+			if (i < parser->items_length - 1)
+				printf(", ");
+		}
+		printf("]\n");
+		*/
+
 		size_t num_datas = 0;
 		RespData** datas = execute_resp_parser(parser, &num_datas);
 
 		if (num_datas == 0) {
 			send(client_fd, "-Bad Request\r\n", 14, 0);
 		} else {
-			print_resp_data_array(datas, num_datas);
+			// print_resp_data_array(datas, num_datas);
 
 			RespData* command_array = datas[0];
 			if (command_array->type == RESP_ARRAY) {
