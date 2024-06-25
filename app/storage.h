@@ -8,17 +8,18 @@
 
 typedef struct {
 	char** keys;
-	void** values;
+	char** values;
 	size_t length;
 	size_t capacity;
 } KeyValueStore;
 
 KeyValueStore* create_kv_store();
 void free_kv_store(KeyValueStore*);
+void print_kv_store(KeyValueStore*);
 
-void* kv_get(KeyValueStore*, char*);
+char* kv_get(KeyValueStore*, char*);
 bool kv_exists(KeyValueStore*, char*);
-void kv_set(KeyValueStore*, char*, void*);
+bool kv_set(KeyValueStore*, char*, char*);
 
 
 #endif /* STORAGE_H */

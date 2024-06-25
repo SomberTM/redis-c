@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "storage.h"
 
@@ -7,7 +8,7 @@ KeyValueStore* create_kv_store() {
 	KeyValueStore* store = malloc(sizeof(KeyValueStore));
 
 	char** keys = malloc(DEFAULT_STORAGE_CAPACITY * sizeof(char*));
-	void** values = malloc(DEFAULT_STORAGE_CAPACITY * sizeof(void*));
+	char** values = malloc(DEFAULT_STORAGE_CAPACITY * sizeof(char*));
 
 	store->keys = keys;
 	store->values = values;
@@ -26,7 +27,7 @@ void free_kv_store(KeyValueStore* store) {
 	store = NULL;
 }
 
-size_t kv_get_index(KeyValueStore* store, char* key) {
+int kv_get_index(KeyValueStore* store, char* key) {
 	if (key == NULL)
 		return -1;
 
@@ -36,13 +37,13 @@ size_t kv_get_index(KeyValueStore* store, char* key) {
 	return -1;
 }
 
-void* kv_get(KeyValueStore* store, char* key) {
+char* kv_get(KeyValueStore* store, char* key) {
 	if (key == NULL)
 		return NULL;
 
-	size_t index = kv_get_index(store, key);
+	int index = kv_get_index(store, key);
 	if (index >= 0)
-		return store->values[index];
+		return store->values[(size_t)index];
 
 	return NULL;
 }
@@ -51,20 +52,28 @@ bool kv_exists(KeyValueStore* store, char* key) {
 	return kv_get_index(store, key) >= 0;
 }
 
-void kv_set(KeyValueStore* store, char* key, void* value) {
+bool kv_set(KeyValueStore* store, char* key, char* value) {
 	if (key == NULL)
-		return;
+		return false;
 
 	// TODO: realloc here
 	if (store->length >= store->capacity)
-		return;
+		return false;
 
-	size_t index = kv_get_index(store, key);
+	int index = kv_get_index(store, key);
 	if (index >= 0) {
-		store->values[index] = value;
+		store->values[(size_t)index] = value;
 	} else {
 		store->keys[store->length] = key;
 		store->values[store->length] = value;
 		store->length++;
 	}
+	return true;
+}
+
+void print_kv_store(KeyValueStore* store) {
+	printf("KeyValueStore (%d/%d) {\n", store->length, store->capacity);
+	for (size_t i = 0; i < store->length; i++)
+		printf("\t%d. '%s' = '%s'\n", i + 1, store->keys[i], store->values[i]);
+	printf("}\n");
 }

@@ -1,7 +1,9 @@
-#include "parser.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+#include "parser.h"
+#include "utils.h"
 
 RespDataType get_resp_data_type(char first_byte) {
 	switch (first_byte) {
@@ -75,14 +77,6 @@ char** split_resp_request(char* request, size_t* out_num_strs) {
 	for (size_t i = 0; i < *out_num_strs; i++)
 		out[i] = temp_strs[i];
 	return out;
-}
-
-char* strclone(const char* src) {
-	size_t len = strlen(src);
-	char* dest = (char*) malloc(len * sizeof(char));
-
-	strcpy(dest, src);
-	return dest;
 }
 
 RespParser* create_resp_parser(char* request) {

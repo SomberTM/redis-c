@@ -10,10 +10,14 @@
 #include <ctype.h>
 
 #include "parser.h"
+#include "storage.h"
+#include "encoder.h"
+#include "utils.h"
 
 #define MAX_CONCURRENT_CLIENTS 10
 
 pthread_mutex_t accept_mutex;
+KeyValueStore* global_store;
 
 void* accept_connection(void*);
 
@@ -57,6 +61,8 @@ int main() {
 		printf("Listen failed: %s \n", strerror(errno));
 		return 1;
 	}
+
+	global_store = create_kv_store();
 	
 	pthread_mutex_init(&accept_mutex, NULL);
 
@@ -77,6 +83,9 @@ int main() {
 	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
 		pthread_join(thread_pool[i], NULL);
 	}
+
+	free_kv_store(global_store);
+	global_store = NULL;
 
 	close(server_fd);
 
@@ -158,14 +167,44 @@ void* accept_connection(void* server_fd_ptr) {
 							if (strcmp(command->value->string, "PING") == 0) {
 								send(client_fd, "+PONG\r\n", 7, 0);
 							} else if (strcmp(command->value->string, "ECHO") == 0) {
-								RespData* response = array->data->values[1];
-								if (response != NULL && response->type == RESP_BULK_STRING) {
-									char message[256];				
-									sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
-									send(client_fd, message, strlen(message), 0);
+								RespData* echo = array->data->values[1];
+								if (echo != NULL && echo->type == RESP_BULK_STRING) {
+									char* response = encode_resp_data(echo);
+									send(client_fd, response, strlen(response), 0);
+									free(response);
+								}
+							} else if (strcmp(command->value->string, "GET") == 0) {
+								RespData* key = array->data->values[1];
+								char* value = kv_get(global_store, key->value->string);
+								if (value == NULL) {
+									send(client_fd, NULL_BULK_STRING, strlen(NULL_BULK_STRING), 0);
+								} else {
+									char* response = to_bulk_string(value);
+									send(client_fd, response, strlen(response), 0);
+									free(response);
+								}
+							} else if (strcmp(command->value->string, "SET") == 0) {
+								RespData* key = array->data->values[1];
+								RespData* value = array->data->values[2];
+
+								char* error = "Invalid arguments for \"SET\" command";
+								if (key == NULL || value == NULL) {
+									send(client_fd, error, strlen(error), 0);
+								} else if (kv_set(
+									global_store, 
+									strclone(key->value->string), 
+									strclone(value->value->string)
+								)) {
+									print_kv_store(global_store);
+									send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
+								} else {
+									error = "-Failed to \"SET\"\r\n";
+									send(client_fd, error, strlen(error), 0);
 								}
 							} else {
-								send(client_fd, "-Not Supported\r\n", 16, 0);
+								char message[256];
+								sprintf(message, "-\"%s\" command not supported\r\n", command->value->string);
+								send(client_fd, message, strlen(message), 0);
 							}
 
 							sent = true;
