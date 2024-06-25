@@ -190,16 +190,29 @@ void* accept_connection(void* server_fd_ptr) {
 								char* error = "Invalid arguments for \"SET\" command";
 								if (key == NULL || value == NULL) {
 									send(client_fd, error, strlen(error), 0);
-								} else if (kv_set(
-									global_store, 
-									strclone(key->value->string), 
-									strclone(value->value->string)
-								)) {
-									print_kv_store(global_store);
-									send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
 								} else {
-									error = "-Failed to \"SET\"\r\n";
-									send(client_fd, error, strlen(error), 0);
+									RespData* expiration = array->data->values[3];
+									RespData* expire_after = array->data->values[4];
+
+									if (expiration != NULL && expire_after != NULL) {
+										char* expiration_type = expiration->value->string;
+										to_upper(expiration_type);
+										
+										if (strcmp(expiration_type, "PX") == 0) {
+											int expires_after = atoi(expire_after->value->string);
+											if (kv_set_px(global_store, strclone(key->value->string), strclone(value->value->string), expires_after))
+												send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
+										}
+									} else if (kv_set(
+										global_store, 
+										strclone(key->value->string), 
+										strclone(value->value->string)
+									)) {
+										send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
+									} else {
+										error = "-Failed to \"SET\"\r\n";
+										send(client_fd, error, strlen(error), 0);
+									}
 								}
 							} else {
 								char message[256];
@@ -219,6 +232,7 @@ void* accept_connection(void* server_fd_ptr) {
 			}
 
 			free_resp_data_array(datas, num_datas);
+			print_kv_store(global_store);
 		}
 
 		close(client_fd);

@@ -20,6 +20,16 @@ void print_kv_store(KeyValueStore*);
 char* kv_get(KeyValueStore*, char*);
 bool kv_exists(KeyValueStore*, char*);
 bool kv_set(KeyValueStore*, char*, char*);
+bool kv_set_px(KeyValueStore*, char*, char*, int);
+bool kv_set_ex(KeyValueStore*, char*, char*, int);
+char* kv_delete(KeyValueStore*, char*);
 
+typedef struct {
+	KeyValueStore* store;
+	char* key;
+	int after;
+} ExpireInfo;
+
+void* kv_expire(void*);
 
 #endif /* STORAGE_H */

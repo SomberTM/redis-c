@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #include "storage.h"
 
@@ -69,6 +71,57 @@ bool kv_set(KeyValueStore* store, char* key, char* value) {
 		store->length++;
 	}
 	return true;
+}
+
+bool kv_set_px(KeyValueStore* store, char* key, char* value, int ms) {
+	if (key == NULL)
+		return false;
+
+	// TODO: realloc here
+	if (store->length >= store->capacity)
+		return false;
+
+	int index = kv_get_index(store, key);
+	if (index >= 0) {
+		store->values[(size_t)index] = value;
+	} else {
+		store->keys[store->length] = key;
+		store->values[store->length] = value;
+		store->length++;
+	}
+
+	ExpireInfo* info = malloc(sizeof(ExpireInfo));
+	info->store = store;
+	info->key = key;
+	info->after = ms;
+
+	pthread_t thread;
+	pthread_create(&thread, NULL, kv_expire, info);
+
+	return true;
+}
+
+char* kv_delete(KeyValueStore* store, char* key) {
+	if (key == NULL)
+		return NULL;
+
+	int index = kv_get_index(store, key);
+	if (index < 0)
+		return NULL;
+
+	char* value = store->values[index];
+	store->values[index] = NULL;
+	return value;
+}
+
+void* kv_expire(void* arg) {
+	ExpireInfo* expire = (ExpireInfo*) arg;
+	printf("Evicting %s in %dms\n", expire->key, expire->after);
+	usleep(expire->after * 1000);
+	kv_delete(expire->store, expire->key);
+	printf("Evicted %s\n", expire->key);
+	free(expire);
+	return NULL;
 }
 
 void print_kv_store(KeyValueStore* store) {
