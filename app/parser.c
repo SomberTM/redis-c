@@ -57,6 +57,7 @@ char** split_resp_request(char* request, size_t* out_num_strs) {
 		if (request[n] == '\r' && request[k] == '\n') {
 			char* temp_str = malloc(buf_len * sizeof(char));
 			strncpy(temp_str, buffer, buf_len);
+			temp_str[buf_len] = '\0';
 
 			temp_strs[*out_num_strs] = temp_str;
 			*out_num_strs += 1;
@@ -76,12 +77,16 @@ char** split_resp_request(char* request, size_t* out_num_strs) {
 	return out;
 }
 
+char* strclone(const char* src) {
+	size_t len = strlen(src);
+	char* dest = (char*) malloc(len * sizeof(char));
+
+	strcpy(dest, src);
+	return dest;
+}
+
 RespParser* create_resp_parser(char* request) {
 	RespParser* parser = malloc(sizeof(RespParser));
-
-	RespData** datas = (RespData**) malloc(DEFAULT_RESP_DATA_LENGTH * sizeof(RespData*));
-	parser->datas = datas;
-	parser->datas_length = 0;
 
 	size_t items_length = 0;
 	char** items = split_resp_request(request, &items_length);
@@ -90,6 +95,13 @@ RespParser* create_resp_parser(char* request) {
 	parser->current_item_index = 0;
 
 	return parser;
+}
+
+void free_resp_parser(RespParser* parser) {
+	for (size_t i = 0; i < parser->items_length; i++)
+		free(parser->items[i]);
+	free(parser);
+	parser = NULL;
 }
 
 RespData* get_current_resp_data(RespParser*);
@@ -103,7 +115,7 @@ RespData* get_current_bulk_string(RespParser* parser) {
 	
 	RespData* data = create_resp_data(RESP_BULK_STRING);
 	char* string = parser->items[++parser->current_item_index];
-	data->value->string = string;
+	data->value->string = strclone(string);
 
 	return data;
 }
@@ -156,7 +168,7 @@ RespData* get_current_resp_data(RespParser* parser) {
 			break;
 		default:
 			data = create_resp_data(type);	
-			data->value->string = value;
+			data->value->string = strclone(value);
 			break;
 	}
 
@@ -164,13 +176,64 @@ RespData* get_current_resp_data(RespParser* parser) {
 	return data;
 }
 
+/**
+ * executes and frees the parser
+ */
 RespData** execute_resp_parser(RespParser* parser, size_t* datas_length) {
+	RespData** datas = (RespData**) malloc(DEFAULT_RESP_DATA_LENGTH * sizeof(RespData*));
+	*datas_length = 0;
+
 	while (parser->current_item_index < parser->items_length) {
-		parser->datas[parser->datas_length++] = get_current_resp_data(parser);
+		datas[*datas_length] = get_current_resp_data(parser);
+		*datas_length += 1;
 	}
 
-	*datas_length = parser->datas_length;
-	return parser->datas;
+	free_resp_parser(parser);
+	return datas;
+}
+
+void free_resp_array(RespArray* array) {
+	if (array->is_nested) {
+		for (size_t i = 0; i < array->length; i++) {
+			free_resp_array(array->data->arrays[i]);
+			array->data->arrays[i] = NULL;
+		}
+		array->data->arrays = NULL;
+	} else {
+		free_resp_data_array(array->data->values, array->length);
+		array->data->values = NULL;
+	}
+
+	free(array->data);
+	array->data = NULL;
+	free(array);
+	array = NULL;
+}
+
+void free_resp_data_array(RespData** data_array, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		RespData* data = data_array[i];
+		switch (data->type) {
+			case RESP_BULK_STRING:
+			case RESP_SIMPLE_STRING:
+			case RESP_SIMPLE_ERROR:
+				free(data->value->string);
+				data->value->string = NULL;
+				break;
+			case RESP_ARRAY:
+				free_resp_array(data->value->array);
+				data->value->array = NULL;
+				break;
+			default:
+				printf("free_resp_data_array: unsupported data type %d\n", data->type);
+				break;
+		}
+		free(data);
+		data = NULL;
+	}
+
+	free(data_array);
+	data_array = NULL;
 }
 
 void print_resp_array(RespArray* array) {

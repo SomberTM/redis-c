@@ -11,7 +11,7 @@
 
 #include "parser.h"
 
-#define MAX_CONCURRENT_CLIENTS 5
+#define MAX_CONCURRENT_CLIENTS 10
 
 pthread_mutex_t accept_mutex;
 
@@ -118,56 +118,68 @@ void* accept_connection(void* server_fd_ptr) {
 		printf("Client connected\n");
 
 		char buffer[1024];
-		int n = read(client_fd, buffer, 1024);
-		buffer[n] = '\0';
+		size_t n;
+		while ((n = read(client_fd, buffer, 1024)) > 0) {
+			buffer[n] = '\0';
 
-		/*
-		printf("Received bytes: ");
-		raw_print(buffer);
-		printf("\n");
-		*/
+			printf("Received bytes: ");
+			raw_print(buffer);
+			printf("\n");
 
-		RespParser* parser = create_resp_parser(buffer);
+			RespParser* parser = create_resp_parser(buffer);
 
-		/*
-		printf("Raw (%d) [", parser->items_length);
-		for (size_t i = 0; i < parser->items_length; i++) {
-			printf("%s", parser->items[i]);
+			printf("Raw (%d) [", parser->items_length);
+			for (size_t i = 0; i < parser->items_length; i++) {
+				printf("%s", parser->items[i]);
 			if (i < parser->items_length - 1)
 				printf(", ");
-		}
-		printf("]\n");
-		*/
+			}
+			printf("]\n");
 
-		size_t num_datas = 0;
-		RespData** datas = execute_resp_parser(parser, &num_datas);
+			size_t num_datas = 0;
+			RespData** datas = execute_resp_parser(parser, &num_datas);
 
-		if (num_datas == 0) {
-			send(client_fd, "-Bad Request\r\n", 14, 0);
-		} else {
-			// print_resp_data_array(datas, num_datas);
+			bool sent = false;
 
-			RespData* command_array = datas[0];
-			if (command_array->type == RESP_ARRAY) {
-				RespArray* array = command_array->value->array;
-				if (array->length > 0) {
-					RespData* command = array->data->values[0];
-					if (command->type == RESP_BULK_STRING) {
-						to_upper(command->value->string);
+			if (num_datas == 0) {
+				send(client_fd, "-Bad Request\r\n", 14, 0);
+				sent = true;
+			} else {
+				print_resp_data_array(datas, num_datas);
 
-						if (strcmp(command->value->string, "PING") == 0) {
-							send(client_fd, "+PONG\r\n", 7, 0);
-						} else if (strcmp(command->value->string, "ECHO") == 0) {
-							RespData* response = array->data->values[1];
-							if (response != NULL && response->type == RESP_BULK_STRING) {
-								char message[256];				
-								sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
-								send(client_fd, message, strlen(message), 0);
+				RespData* command_array = datas[0];
+				if (command_array->type == RESP_ARRAY) {
+					RespArray* array = command_array->value->array;
+					if (array->length > 0) {
+						RespData* command = array->data->values[0];
+						if (command->type == RESP_BULK_STRING) {
+							to_upper(command->value->string);
+
+							if (strcmp(command->value->string, "PING") == 0) {
+								send(client_fd, "+PONG\r\n", 7, 0);
+							} else if (strcmp(command->value->string, "ECHO") == 0) {
+								RespData* response = array->data->values[1];
+								if (response != NULL && response->type == RESP_BULK_STRING) {
+									char message[256];				
+									sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
+									send(client_fd, message, strlen(message), 0);
+								}
+							} else {
+								send(client_fd, "-Not Supported\r\n", 16, 0);
 							}
+
+							sent = true;
 						}
 					}
 				}
 			}
+
+			if (!sent) {
+				printf("No message was sent\n");
+				send(client_fd, "-Bad Request\r\n", 14, 0);
+			}
+
+			free_resp_data_array(datas, num_datas);
 		}
 
 		close(client_fd);

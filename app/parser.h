@@ -21,8 +21,6 @@ typedef enum {
 	RESP_MAP,
 	RESP_SET,
 	RESP_PUSHES,
-	// Not an official rest type, used internally for commands, also never to be returned by byte_to_resp_data_type
-	RESP_TEXT,
 	RESP_DATA_TYPE_UNKNOWN
 } RespDataType;
 
@@ -31,7 +29,7 @@ typedef struct RespData RespData;
 
 typedef union {
 	RespData** values;
-	RespArray* array;
+	RespArray** arrays;
 } RespArrayData;
 
 struct RespArray {
@@ -62,12 +60,8 @@ struct RespData {
 };
 
 typedef struct {
-	RespData** datas;
-	size_t datas_length;
-
 	char** items;
 	size_t items_length;
-
 	size_t current_item_index;
 } RespParser;
 
@@ -81,7 +75,8 @@ char** split_resp_request(char*, size_t*);
 RespParser* create_resp_parser(char*);
 void free_resp_parser(RespParser*);
 RespData** execute_resp_parser(RespParser*, size_t*);
-RespData** parse_resp_request(char*, size_t*);
+void free_resp_array(RespArray*);
+void free_resp_data_array(RespData**, size_t);
 
 void print_resp_data(RespData*);
 void print_resp_data_array(RespData**, size_t);
