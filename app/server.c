@@ -7,6 +7,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <ctype.h>
+
+#include "parser.h"
 
 #define MAX_CONCURRENT_CLIENTS 5
 
@@ -80,6 +83,12 @@ int main() {
 	return 0;
 }
 
+char* to_upper(char* src) {
+	for (int i = 0; src[i] != '\0'; i++)
+		src[i] = toupper(src[i]);
+	return src;
+}
+
 void* accept_connection(void* server_fd_ptr) {
 	int server_fd = *(int*)(server_fd_ptr);
 
@@ -96,8 +105,37 @@ void* accept_connection(void* server_fd_ptr) {
 		printf("Client connected\n");
 
 		char buffer[1024];
+		/*
 		while (read(client_fd, buffer, 1024) > 0) {
-			send(client_fd, "+PONG\r\n", 7, 0);
+		}
+		*/
+		int n = read(client_fd, buffer, 1024);
+		buffer[n] = '\0';
+
+		RespParser* parser = create_resp_parser(buffer);
+		size_t num_datas = 0;
+		RespData** datas = execute_resp_parser(parser, &num_datas);
+
+		if (num_datas == 0) {
+			send(client_fd, "-Bad Request\r\n", 14, 0);
+		} else {
+			print_resp_data_array(datas, num_datas);
+
+			RespData* command_array = datas[0];
+			if (command_array->type == RESP_ARRAY) {
+				RespArray* array = command_array->value->array;
+				if (array->length > 0) {
+					RespData* command = array->data->values[0];
+					if (command->type == RESP_BULK_STRING && strcmp(to_upper(command->value->string), "ECHO") == 0) {
+						RespData* response = array->data->values[1];
+						if (response != NULL && response->type == RESP_BULK_STRING) {
+							char message[256];				
+							sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
+							send(client_fd, message, strlen(message), -1);
+						}
+					}
+				}
+			}
 		}
 
 		close(client_fd);
