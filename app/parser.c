@@ -139,6 +139,7 @@ RespData* get_current_resp_data(RespParser* parser) {
 	char* value = current + 1;
 
 	RespData* data = NULL;
+	RespArray* array = NULL;
 
 	switch (type) {
 		case RESP_INTEGER:
@@ -149,7 +150,7 @@ RespData* get_current_resp_data(RespParser* parser) {
 			data = get_current_bulk_string(parser);
 			break;
 		case RESP_ARRAY:
-			RespArray* array = get_current_resp_array(parser);
+			array = get_current_resp_array(parser);
 			data = create_resp_data(RESP_ARRAY);
 			data->value->array = array;
 			break;
