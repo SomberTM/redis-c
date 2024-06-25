@@ -152,12 +152,18 @@ void* accept_connection(void* server_fd_ptr) {
 				RespArray* array = command_array->value->array;
 				if (array->length > 0) {
 					RespData* command = array->data->values[0];
-					if (command->type == RESP_BULK_STRING && strcmp(to_upper(command->value->string), "ECHO") == 0) {
-						RespData* response = array->data->values[1];
-						if (response != NULL && response->type == RESP_BULK_STRING) {
-							char message[256];				
-							sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
-							send(client_fd, message, strlen(message), -1);
+					if (command->type == RESP_BULK_STRING) {
+						to_upper(command->value->string);
+
+						if (strcmp(command->value->string, "PING") == 0) {
+							send(client_fd, "+PONG\r\n", 7, 0);
+						} else if (strcmp(command->value->string, "ECHO") == 0) {
+							RespData* response = array->data->values[1];
+							if (response != NULL && response->type == RESP_BULK_STRING) {
+								char message[256];				
+								sprintf(message, "$%d\r\n%s\r\n", strlen(response->value->string), response->value->string);
+								send(client_fd, message, strlen(message), 0);
+							}
 						}
 					}
 				}
