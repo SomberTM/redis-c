@@ -4,7 +4,6 @@
 
 #include "encoder.h"
 
-
 const char* NULL_BULK_STRING = "$-1\r\n";
 const char* OK_RESPONSE = "+OK\r\n";
 

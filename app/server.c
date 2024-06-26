@@ -13,11 +13,16 @@
 #include "storage.h"
 #include "encoder.h"
 #include "utils.h"
+#include "server.h"
+
+const char* REPLICATION_ROLE_MASTER = "master";
+const char* REPLICATION_ROLE_SLAVE = "slave";
 
 #define MAX_CONCURRENT_CLIENTS 10
 
 pthread_mutex_t accept_mutex;
 KeyValueStore* global_store;
+const char* replication_role;
 
 void* accept_connection(void*);
 
@@ -35,11 +40,14 @@ int main(int argc, char* argv[]) {
 	printf("]\n");
 
 	int master_port = 6379;
+	replication_role = REPLICATION_ROLE_MASTER;
 	if (argc >= 3) {
 		for (int i = 0; i < argc; i++) {
 			char* arg = argv[i];
 			if (strcmp(arg, "--port") == 0)
 				master_port = atoi(argv[i + 1]);
+			else if (strcmp(arg, "--replicaof") == 0)
+				replication_role = REPLICATION_ROLE_SLAVE;
 		}
 	}
 	
@@ -240,7 +248,9 @@ void* accept_connection(void* server_fd_ptr) {
 									send(client_fd, response, strlen(response), 0);
 									free(response);
 								} else {
-									char* response = to_bulk_string("# Replication\nrole:master");
+									char buffer[256];
+									sprintf(buffer, "# Replication\nrole:%s\n", replication_role);
+									char* response = to_bulk_string(buffer);
 									send(client_fd, response, strlen(response), 0);
 									free(response);
 								}
