@@ -21,10 +21,27 @@ KeyValueStore* global_store;
 
 void* accept_connection(void*);
 
-int main() {
+int main(int argc, char* argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
+
+	printf("Program Arguments (%d) [", argc);
+	for (int i = 0; i < argc; i++) {
+		printf("%s", argv[i]);
+		if (i < argc - 1)
+			printf(", ");
+	}
+	printf("]\n");
+
+	int master_port = 6379;
+	if (argc >= 3) {
+		for (int i = 0; i < argc; i++) {
+			char* arg = argv[i];
+			if (strcmp(arg, "--port") == 0)
+				master_port = atoi(argv[i + 1]);
+		}
+	}
 	
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	printf("Logs from your program will appear here!\n");
@@ -47,7 +64,7 @@ int main() {
 	}
 	
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
-					 .sin_port = htons(6379),
+					 .sin_port = htons(master_port),
 					 .sin_addr = { htonl(INADDR_ANY) },
 					};
 	
@@ -61,6 +78,8 @@ int main() {
 		printf("Listen failed: %s \n", strerror(errno));
 		return 1;
 	}
+
+	printf("Listening on port %d\n", master_port);
 
 	global_store = create_kv_store();
 	
