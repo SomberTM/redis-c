@@ -249,7 +249,7 @@ void* accept_connection(void* server_fd_ptr) {
 									free(response);
 								} else {
 									char buffer[256];
-									sprintf(buffer, "# Replication\nrole:%s\n", replication_role);
+									sprintf(buffer, "# Replication\nrole:%s\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\nmaster_repl_offset:0\n", replication_role);
 									char* response = to_bulk_string(buffer);
 									send(client_fd, response, strlen(response), 0);
 									free(response);
