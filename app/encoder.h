@@ -8,5 +8,6 @@ extern const char* OK_RESPONSE;
 
 char* encode_resp_data(RespData*);
 char* to_bulk_string(char*);
+char* to_simple_error(char*);
 
 #endif /* RESP_ENCODER_H */

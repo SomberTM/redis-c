@@ -31,3 +31,14 @@ char* to_bulk_string(char* buf) {
 	sprintf(bulk_string, "$%d\r\n%s\r\n", buf_len, buf);
 	return bulk_string;
 }
+
+char* to_simple_error(char* message) {
+	if (message == NULL)
+		return NULL;
+
+	size_t message_len = strlen(message);
+	char* simple_error = malloc((message_len + 3) * sizeof(char));
+
+	sprintf(simple_error, "-%s\r\n", message);
+	return simple_error;
+}

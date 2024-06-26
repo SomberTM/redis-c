@@ -233,6 +233,17 @@ void* accept_connection(void* server_fd_ptr) {
 										send(client_fd, error, strlen(error), 0);
 									}
 								}
+							} else if (strcmp(command->value->string, "INFO") == 0) {
+								RespData* info_of = array->data->values[1];
+								if (info_of == NULL) {
+									char* response = to_simple_error("Invalid INFO usage");
+									send(client_fd, response, strlen(response), 0);
+									free(response);
+								} else {
+									char* response = to_bulk_string("# Replication\nrole:master");
+									send(client_fd, response, strlen(response), 0);
+									free(response);
+								}
 							} else {
 								char message[256];
 								sprintf(message, "-\"%s\" command not supported\r\n", command->value->string);
