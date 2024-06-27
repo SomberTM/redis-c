@@ -3,28 +3,123 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <arpa/inet.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <assert.h>
 
 #include "parser.h"
 #include "storage.h"
 #include "encoder.h"
 #include "utils.h"
 #include "server.h"
+#include "commands.h"
 
 const char* REPLICATION_ROLE_MASTER = "master";
 const char* REPLICATION_ROLE_SLAVE = "slave";
 
 #define MAX_CONCURRENT_CLIENTS 10
 
-pthread_mutex_t accept_mutex;
+pthread_t thread_pool[MAX_CONCURRENT_CLIENTS];
+
 KeyValueStore* global_store;
+RedisServer* global_server;
 const char* replication_role;
 
+pthread_mutex_t accept_mutex;
+
 void* accept_connection(void*);
+
+void sigint_handler(int sig) {
+	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++)
+		pthread_cancel(thread_pool[i]);
+
+	close(global_server->fd);
+
+	free_kv_store(global_store);
+	global_store = NULL;
+
+	free_redis_server(global_server);
+	global_server = NULL;
+
+	exit(0);
+}
+
+RedisServer* create_redis_server(const char* role) {
+	RedisServer* server = malloc(sizeof(RedisServer));
+	server->role = role;
+	server->fd = -1;
+	server->port = 6379;
+	
+	if (role == REPLICATION_ROLE_MASTER)
+		server->info.master = create_master_redis_info();
+	else if (role == REPLICATION_ROLE_SLAVE)
+		server->info.slave = create_slave_redis_info();
+
+	return server;
+}
+
+void free_redis_server(RedisServer* server) {
+	if (server->role == REPLICATION_ROLE_MASTER)
+		free(server->info.master);
+	else if (server->role == REPLICATION_ROLE_SLAVE)
+		free(server->info.slave);
+
+	server->info.master = NULL;
+	server->info.slave = NULL;
+
+	free(server);
+	server = NULL;
+}
+
+MasterRedisInfo* create_master_redis_info() {
+	MasterRedisInfo* info = malloc(sizeof(MasterRedisInfo));
+	info->replid = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
+	info->repl_offset = 0;
+	info->connected_slaves = 0;
+	return info;
+}
+
+SlaveRedisInfo* create_slave_redis_info() {
+	SlaveRedisInfo* info = malloc(sizeof(SlaveRedisInfo));
+	return info;
+}
+
+int connect_replica_to_master(RedisServer* server) {
+	assert(strcmp(server->role, REPLICATION_ROLE_SLAVE) == 0);
+
+	SlaveRedisInfo* info = server->info.slave;
+	printf("Replica attempting to connect to master at %s:%d\n", info->master_host, info->master_port);
+
+	int master_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (master_fd == -1) {
+		printf("Socket creation failed: %s...\n", strerror(errno));
+		return -1;
+	}
+
+	struct sockaddr_in serv_addr;
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(info->master_port);
+
+	char* host = strcmp(info->master_host, "localhost") == 0 ? "127.0.0.1" : info->master_host;
+	int bin = inet_pton(AF_INET, host, &serv_addr.sin_addr);
+	if (bin <= 0) {
+		printf("Invalid address family: %s...\n", strerror(errno));
+		return -1;
+	}
+
+	int status = connect(master_fd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
+	if (status == -1) {
+		printf("Replica to master connection failed: %s\n", strerror(errno));
+		return -1;
+	}
+
+	printf("Replica connected to master at %s:%d\n", info->master_host, info->master_port);
+	return master_fd;
+}
 
 int main(int argc, char* argv[]) {
 	// Disable output buffering
@@ -39,18 +134,30 @@ int main(int argc, char* argv[]) {
 	}
 	printf("]\n");
 
-	int master_port = 6379;
-	replication_role = REPLICATION_ROLE_MASTER;
+	int port = 6379;
 	if (argc >= 3) {
 		for (int i = 0; i < argc; i++) {
 			char* arg = argv[i];
 			if (strcmp(arg, "--port") == 0)
-				master_port = atoi(argv[i + 1]);
-			else if (strcmp(arg, "--replicaof") == 0)
-				replication_role = REPLICATION_ROLE_SLAVE;
+				port = atoi(argv[i + 1]);
+			else if (strcmp(arg, "--replicaof") == 0) {
+				global_server = create_redis_server(REPLICATION_ROLE_SLAVE);
+
+				char* info = argv[i + 1];
+				char* host = strtok(info, " ");
+				char* port = strtok(NULL, " ");
+
+				global_server->info.slave->master_host = host;
+				global_server->info.slave->master_port = atoi(port);
+			}
 		}
 	}
-	
+
+	if (global_server == NULL)
+		global_server = create_redis_server(REPLICATION_ROLE_MASTER);
+
+	global_server->port = port;
+
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	printf("Logs from your program will appear here!\n");
 
@@ -62,6 +169,7 @@ int main(int argc, char* argv[]) {
 		printf("Socket creation failed: %s...\n", strerror(errno));
 		return 1;
 	}
+	global_server->fd = server_fd;
 
 	// Since the tester restarts your program quite often, setting SO_REUSEADDR
 	// ensures that we don't run into 'Address already in use' errors
@@ -72,7 +180,7 @@ int main(int argc, char* argv[]) {
 	}
 	
 	struct sockaddr_in serv_addr = { .sin_family = AF_INET ,
-					 .sin_port = htons(master_port),
+					 .sin_port = htons(global_server->port),
 					 .sin_addr = { htonl(INADDR_ANY) },
 					};
 	
@@ -87,22 +195,25 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	printf("Listening on port %d\n", master_port);
+	printf("Listening on port %d\n", global_server->port);
 
 	global_store = create_kv_store();
+
+	if (strcmp(global_server->role, REPLICATION_ROLE_SLAVE) == 0) {
+		int master_fd = connect_replica_to_master(global_server);
+		send(master_fd, PING_REQUEST, strlen(PING_REQUEST), 0);
+		close(master_fd);
+	}
 	
 	pthread_mutex_init(&accept_mutex, NULL);
 
-	pthread_t thread_pool[MAX_CONCURRENT_CLIENTS];
 	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
-		pthread_t thread;
 		pthread_attr_t thread_attr;
 
 		pthread_attr_init(&thread_attr);
 		pthread_attr_setscope(&thread_attr, PTHREAD_SCOPE_SYSTEM);
 
-		pthread_create(&thread, &thread_attr, accept_connection, &server_fd);
-		thread_pool[i] = thread;
+		pthread_create(&thread_pool[i], &thread_attr, accept_connection, &server_fd);
 
 		pthread_attr_destroy(&thread_attr);
 	}
@@ -114,15 +225,12 @@ int main(int argc, char* argv[]) {
 	free_kv_store(global_store);
 	global_store = NULL;
 
+	free_redis_server(global_server);
+	global_server = NULL;
+
 	close(server_fd);
 
 	return 0;
-}
-
-char* to_upper(char* src) {
-	for (int i = 0; src[i] != '\0'; i++)
-		src[i] = toupper(src[i]);
-	return src;
 }
 
 void raw_print(char* str) {
@@ -186,82 +294,13 @@ void* accept_connection(void* server_fd_ptr) {
 				RespData* command_array = datas[0];
 				if (command_array->type == RESP_ARRAY) {
 					RespArray* array = command_array->value->array;
-					if (array->length > 0) {
-						RespData* command = array->data->values[0];
-						if (command->type == RESP_BULK_STRING) {
-							to_upper(command->value->string);
 
-							if (strcmp(command->value->string, "PING") == 0) {
-								send(client_fd, "+PONG\r\n", 7, 0);
-							} else if (strcmp(command->value->string, "ECHO") == 0) {
-								RespData* echo = array->data->values[1];
-								if (echo != NULL && echo->type == RESP_BULK_STRING) {
-									char* response = encode_resp_data(echo);
-									send(client_fd, response, strlen(response), 0);
-									free(response);
-								}
-							} else if (strcmp(command->value->string, "GET") == 0) {
-								RespData* key = array->data->values[1];
-								char* value = kv_get(global_store, key->value->string);
-								if (value == NULL) {
-									send(client_fd, NULL_BULK_STRING, strlen(NULL_BULK_STRING), 0);
-								} else {
-									char* response = to_bulk_string(value);
-									send(client_fd, response, strlen(response), 0);
-									free(response);
-								}
-							} else if (strcmp(command->value->string, "SET") == 0) {
-								RespData* key = array->data->values[1];
-								RespData* value = array->data->values[2];
-
-								char* error = "Invalid arguments for \"SET\" command";
-								if (key == NULL || value == NULL) {
-									send(client_fd, error, strlen(error), 0);
-								} else {
-									RespData* expiration = array->data->values[3];
-									RespData* expire_after = array->data->values[4];
-
-									if (expiration != NULL && expire_after != NULL) {
-										char* expiration_type = expiration->value->string;
-										to_upper(expiration_type);
-										
-										if (strcmp(expiration_type, "PX") == 0) {
-											int expires_after = atoi(expire_after->value->string);
-											if (kv_set_px(global_store, strclone(key->value->string), strclone(value->value->string), expires_after))
-												send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
-										}
-									} else if (kv_set(
-										global_store, 
-										strclone(key->value->string), 
-										strclone(value->value->string)
-									)) {
-										send(client_fd, OK_RESPONSE, strlen(OK_RESPONSE), 0);
-									} else {
-										error = "-Failed to \"SET\"\r\n";
-										send(client_fd, error, strlen(error), 0);
-									}
-								}
-							} else if (strcmp(command->value->string, "INFO") == 0) {
-								RespData* info_of = array->data->values[1];
-								if (info_of == NULL) {
-									char* response = to_simple_error("Invalid INFO usage");
-									send(client_fd, response, strlen(response), 0);
-									free(response);
-								} else {
-									char buffer[256];
-									sprintf(buffer, "# Replication\nrole:%s\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\nmaster_repl_offset:0\n", replication_role);
-									char* response = to_bulk_string(buffer);
-									send(client_fd, response, strlen(response), 0);
-									free(response);
-								}
-							} else {
-								char message[256];
-								sprintf(message, "-\"%s\" command not supported\r\n", command->value->string);
-								send(client_fd, message, strlen(message), 0);
-							}
-
-							sent = true;
-						}
+					char* response = execute_command(array);
+					if (response != NULL) {
+						send(client_fd, response, strlen(response), 0);
+						if (strcmp(response, OK_RESPONSE) != 0 && strcmp(response, NULL_BULK_STRING) != 0)
+							free(response);
+						sent = true;
 					}
 				}
 			}

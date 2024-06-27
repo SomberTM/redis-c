@@ -232,12 +232,14 @@ void free_resp_data_array(RespData** data_array, size_t len) {
 
 void print_resp_array(RespArray* array) {
 	// ignoring nested
-	printf("Array (%d) [", array->length);
+	printf("Array (%d) [\n", array->length);
 	for (size_t i = 0; i < array->length; i++) {
 		RespData* data = array->data->values[i];
+		printf("\t");
 		print_resp_data(data);
 		if (i < array->length - 1)
 			printf(", ");
+		printf("\n");
 	}
 	printf("]\n");
 }
@@ -254,8 +256,13 @@ void print_resp_data(RespData* data) {
 }
 
 void print_resp_data_array(RespData** array, size_t len) {
+	printf("Resp Data Array (%d) [\n", len);
 	for (size_t i = 0; i < len; i++) {
+		printf("\t");
 		print_resp_data(array[i]);
+		if (i < len - 1)
+			printf(", ");
 		printf("\n");
 	}
+	printf("]\n");
 }

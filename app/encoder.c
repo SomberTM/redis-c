@@ -6,6 +6,7 @@
 
 const char* NULL_BULK_STRING = "$-1\r\n";
 const char* OK_RESPONSE = "+OK\r\n";
+const char* PING_REQUEST = "*1\r\n$4\r\nPING\r\n"; 
 
 char* encode_resp_data(RespData* data) {
 	switch (data->type) {
@@ -40,4 +41,10 @@ char* to_simple_error(char* message) {
 
 	sprintf(simple_error, "-%s\r\n", message);
 	return simple_error;
+}
+
+char* to_resp_array(char** array, size_t len) {
+	if (array == NULL) return NULL;
+
+	return NULL;
 }
