@@ -32,6 +32,17 @@ char* to_bulk_string(char* buf) {
 	return bulk_string;
 }
 
+char* to_simple_string(char* buf) {
+	if (buf == NULL)
+		return NULL;
+
+	size_t buf_len = strlen(buf);
+	char* simple_error = malloc((buf_len + 3) * sizeof(char));
+
+	sprintf(simple_error, "+%s\r\n", buf);
+	return simple_error;
+}
+
 char* to_simple_error(char* message) {
 	if (message == NULL)
 		return NULL;

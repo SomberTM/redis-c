@@ -215,6 +215,10 @@ int main(int argc, char* argv[]) {
 		send(master_fd, replconf_capa, strlen(replconf_capa), 0);
 		read(master_fd, trash, 1024);
 
+		char* psync = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
+		send(master_fd, psync, strlen(psync), 0);
+		read(master_fd, trash, 1024);
+
 		close(master_fd);
 	}
 	

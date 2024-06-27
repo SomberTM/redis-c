@@ -45,6 +45,12 @@ char* execute_command(RespArray* command_array) {
 			command_array->data->values[1], 
 			command_array->data->values[2]
 		);
+	} else if (strcmp(command, "PSYNC") == 0) {
+		assert(command_array->length >= 3);
+		return psync_command(
+			command_array->data->values[1], 
+			command_array->data->values[2]
+		);
 	}
 
 	return NULL;
@@ -143,10 +149,34 @@ char* replconf_command(RespData* confkey_data, RespData* value_data) {
 		replconf_port = strclone(value);
 		printf("REPLCONF: Replica listening on port %s\n", value);
 		return OK_RESPONSE;
-	} else if (strcmp(confkey, "CAPA") == 0 && strcmp(value, "PSYNC2") == 0) {
-		printf("REPLCONF: Replica capabilities %s\n", value);
+	} else if (strcmp(confkey, "CAPA") == 0) {
+		// TODO: check actual capa, expand replconf_command args to accept RespData**, size_t
+		printf("REPLCONF: Replica with capabilities at least %s\n", value);
+		free(replconf_port);
+		replconf_port = NULL;
 		return OK_RESPONSE;
 	}
 
 	return to_simple_error("Unsupported REPLCONF key");
+}
+
+char* psync_command(RespData* master_replid_data, RespData* master_offset_data) {
+	if (strcmp(global_server->role, REPLICATION_ROLE_MASTER) != 0)
+		return to_simple_error("PSYNC command received in replica");
+
+	MasterRedisInfo* info = global_server->info.master;
+
+	assert_resp_string(master_replid_data);
+	assert_resp_string(master_offset_data);
+
+	char* master_replid = master_replid_data->value->string;
+	char* master_offset = master_offset_data->value->string;
+
+	if (strcmp(master_replid, "?") == 0 && strcmp(master_offset, "-1") == 0) {
+		char message[256];
+		sprintf(message, "FULLRESYNC %s %d", info->replid, info->repl_offset); 
+		return to_simple_string(message);
+	}
+
+	return to_simple_error("Unsupported PSYNC values");
 }

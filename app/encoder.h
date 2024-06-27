@@ -9,6 +9,7 @@ extern const char* PING_REQUEST;
 
 char* encode_resp_data(RespData*);
 char* to_bulk_string(char*);
+char* to_simple_string(char*);
 char* to_simple_error(char*);
 char* to_resp_array(char**, size_t);
 
