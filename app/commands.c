@@ -39,6 +39,12 @@ char* execute_command(RespArray* command_array) {
 	} else if (strcmp(command, "INFO") == 0) {
 		assert(command_array->length >= 2);
 		return info_command(command_array->data->values[1]);
+	} else if (strcmp(command, "REPLCONF") == 0) {
+		assert(command_array->length >= 3);
+		return replconf_command(
+			command_array->data->values[1], 
+			command_array->data->values[2]
+		);
 	}
 
 	return NULL;
@@ -121,4 +127,26 @@ char* info_command(RespData* target_data) {
 	}
 
 	return to_simple_error("Unsupported info target");
+}
+
+char* replconf_port = NULL;
+char* replconf_command(RespData* confkey_data, RespData* value_data) {
+	assert_resp_string(confkey_data);
+	assert_resp_string(value_data);
+
+	char* confkey = confkey_data->value->string;
+	to_upper(confkey);
+	char* value = value_data->value->string;
+	to_upper(value);
+
+	if (strcmp(confkey, "LISTENING-PORT") == 0) {
+		replconf_port = strclone(value);
+		printf("REPLCONF: Replica listening on port %s\n", value);
+		return OK_RESPONSE;
+	} else if (strcmp(confkey, "CAPA") == 0 && strcmp(value, "PSYNC2") == 0) {
+		printf("REPLCONF: Replica capabilities %s\n", value);
+		return OK_RESPONSE;
+	}
+
+	return to_simple_error("Unsupported REPLCONF key");
 }

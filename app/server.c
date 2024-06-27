@@ -200,8 +200,21 @@ int main(int argc, char* argv[]) {
 	global_store = create_kv_store();
 
 	if (strcmp(global_server->role, REPLICATION_ROLE_SLAVE) == 0) {
+		char trash[1024];
+
 		int master_fd = connect_replica_to_master(global_server);
 		send(master_fd, PING_REQUEST, strlen(PING_REQUEST), 0);
+		read(master_fd, trash, 1024);
+
+		char replconf_port[256];
+		sprintf(replconf_port, "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n%d\r\n", global_server->port);
+		send(master_fd, replconf_port, strlen(replconf_port), 0);
+		read(master_fd, trash, 1024);
+
+		char* replconf_capa = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
+		send(master_fd, replconf_capa, strlen(replconf_capa), 0);
+		read(master_fd, trash, 1024);
+
 		close(master_fd);
 	}
 	
@@ -282,6 +295,7 @@ void* accept_connection(void* server_fd_ptr) {
 
 			size_t num_datas = 0;
 			RespData** datas = execute_resp_parser(parser, &num_datas);
+			parser = NULL;
 
 			bool sent = false;
 
@@ -311,6 +325,8 @@ void* accept_connection(void* server_fd_ptr) {
 			}
 
 			free_resp_data_array(datas, num_datas);
+			datas = NULL;
+
 			print_kv_store(global_store);
 		}
 
