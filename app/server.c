@@ -17,6 +17,7 @@
 #include "utils.h"
 #include "server.h"
 #include "commands.h"
+#include "replication.h"
 
 const char* REPLICATION_ROLE_MASTER = "master";
 const char* REPLICATION_ROLE_SLAVE = "slave";
@@ -46,6 +47,16 @@ void sigint_handler(int sig) {
 	global_server = NULL;
 
 	exit(0);
+}
+
+bool ami_slave() {
+	if (global_server == NULL) return false;
+	return global_server->role == REPLICATION_ROLE_SLAVE;
+}
+
+bool ami_master() {
+	if (global_server == NULL) return false;
+	return global_server->role == REPLICATION_ROLE_MASTER;
 }
 
 RedisServer* create_redis_server(const char* role) {
@@ -79,46 +90,14 @@ MasterRedisInfo* create_master_redis_info() {
 	MasterRedisInfo* info = malloc(sizeof(MasterRedisInfo));
 	info->replid = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
 	info->repl_offset = 0;
-	info->connected_slaves = 0;
+	info->num_connected_slaves = 0;
+	info->connected_slaves = NULL;
 	return info;
 }
 
 SlaveRedisInfo* create_slave_redis_info() {
 	SlaveRedisInfo* info = malloc(sizeof(SlaveRedisInfo));
 	return info;
-}
-
-int connect_replica_to_master(RedisServer* server) {
-	assert(strcmp(server->role, REPLICATION_ROLE_SLAVE) == 0);
-
-	SlaveRedisInfo* info = server->info.slave;
-	printf("Replica attempting to connect to master at %s:%d\n", info->master_host, info->master_port);
-
-	int master_fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (master_fd == -1) {
-		printf("Socket creation failed: %s...\n", strerror(errno));
-		return -1;
-	}
-
-	struct sockaddr_in serv_addr;
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(info->master_port);
-
-	char* host = strcmp(info->master_host, "localhost") == 0 ? "127.0.0.1" : info->master_host;
-	int bin = inet_pton(AF_INET, host, &serv_addr.sin_addr);
-	if (bin <= 0) {
-		printf("Invalid address family: %s...\n", strerror(errno));
-		return -1;
-	}
-
-	int status = connect(master_fd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
-	if (status == -1) {
-		printf("Replica to master connection failed: %s\n", strerror(errno));
-		return -1;
-	}
-
-	printf("Replica connected to master at %s:%d\n", info->master_host, info->master_port);
-	return master_fd;
 }
 
 int main(int argc, char* argv[]) {
@@ -198,45 +177,43 @@ int main(int argc, char* argv[]) {
 	printf("Listening on port %d\n", global_server->port);
 
 	global_store = create_kv_store();
-
-	if (strcmp(global_server->role, REPLICATION_ROLE_SLAVE) == 0) {
-		char trash[1024];
-
-		int master_fd = connect_replica_to_master(global_server);
-		send(master_fd, PING_REQUEST, strlen(PING_REQUEST), 0);
-		read(master_fd, trash, 1024);
-
-		char replconf_port[256];
-		sprintf(replconf_port, "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n%d\r\n", global_server->port);
-		send(master_fd, replconf_port, strlen(replconf_port), 0);
-		read(master_fd, trash, 1024);
-
-		char* replconf_capa = "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
-		send(master_fd, replconf_capa, strlen(replconf_capa), 0);
-		read(master_fd, trash, 1024);
-
-		char* psync = "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
-		send(master_fd, psync, strlen(psync), 0);
-		read(master_fd, trash, 1024);
-
-		close(master_fd);
-	}
-	
 	pthread_mutex_init(&accept_mutex, NULL);
 
-	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
+	if (ami_slave()) {
+		char trash[1024];
+
+		int master_fd = connect_to_master(global_server);
+		send_handshake(master_fd);
+
+		close(master_fd);
+
+		// Replica will have one client, the master server
+		pthread_t thread;
 		pthread_attr_t thread_attr;
 
 		pthread_attr_init(&thread_attr);
 		pthread_attr_setscope(&thread_attr, PTHREAD_SCOPE_SYSTEM);
 
-		pthread_create(&thread_pool[i], &thread_attr, accept_connection, &server_fd);
+		thread_pool[0] = thread;
+		pthread_create(&thread, &thread_attr, accept_connection, &server_fd);
 
 		pthread_attr_destroy(&thread_attr);
-	}
+		pthread_join(thread, NULL);
+	} else if (ami_master()) {
+		for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
+			pthread_attr_t thread_attr;
 
-	for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
-		pthread_join(thread_pool[i], NULL);
+			pthread_attr_init(&thread_attr);
+			pthread_attr_setscope(&thread_attr, PTHREAD_SCOPE_SYSTEM);
+
+			pthread_create(&thread_pool[i], &thread_attr, accept_connection, &server_fd);
+
+			pthread_attr_destroy(&thread_attr);
+		}
+
+		for (int i = 0; i < MAX_CONCURRENT_CLIENTS; i++) {
+			pthread_join(thread_pool[i], NULL);
+		}
 	}
 
 	free_kv_store(global_store);
@@ -248,19 +225,6 @@ int main(int argc, char* argv[]) {
 	close(server_fd);
 
 	return 0;
-}
-
-void raw_print(char* str) {
-	while (*str) {
-		if (*str == '\r') {
-			printf("\\r");
-		} else if (*str == '\n') {
-			printf("\\n");
-		} else {
-			putchar(*str);
-		}
-		str++;
-	}
 }
 
 void* accept_connection(void* server_fd_ptr) {
@@ -313,11 +277,13 @@ void* accept_connection(void* server_fd_ptr) {
 				if (command_array->type == RESP_ARRAY) {
 					RespArray* array = command_array->value->array;
 
-					char* response = execute_command(array);
+					const char* response = execute_command(array);
 					if (response != NULL) {
+						printf("Responding with: ");
+						raw_print(response);
+						printf("\n");
+
 						send(client_fd, response, strlen(response), 0);
-						if (strcmp(response, OK_RESPONSE) != 0 && strcmp(response, NULL_BULK_STRING) != 0)
-							free(response);
 						sent = true;
 					}
 				}

@@ -2,6 +2,11 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "commands.h"
 #include "parser.h"
@@ -10,7 +15,9 @@
 #include "server.h"
 #include "storage.h"
 
-char* execute_command(RespArray* command_array) {
+static __thread char response_buf[65536];
+
+const char* execute_command(RespArray* command_array) {
 	if (command_array->length <= 0 || command_array->is_nested)
 		return NULL;
 
@@ -56,27 +63,39 @@ char* execute_command(RespArray* command_array) {
 	return NULL;
 }
 
-char* ping_command() {
-	return to_bulk_string("PONG");
+/**
+ * Given an string allocated by the encoder, populates the
+ * (TLS) response and returns it
+ */
+const char* to_response_buffer(char* allocd_str) {
+	if (allocd_str == NULL) return NULL;
+
+	snprintf(response_buf, sizeof(response_buf), "%s", allocd_str);
+	free(allocd_str);
+	return response_buf;
 }
 
-char* echo_command(RespData* echo_data) {
+const char* ping_command() {
+	return to_response_buffer(to_bulk_string("PONG"));	
+}
+
+const char* echo_command(RespData* echo_data) {
 	assert_resp_string(echo_data);
 	char* echo_response = echo_data->value->string;
-	return to_bulk_string(echo_response);
+	return to_response_buffer(to_bulk_string(echo_response));
 }
 
-char* get_command(RespData* key_data) {
+const char* get_command(RespData* key_data) {
 	assert_resp_string(key_data);
 	char* key = key_data->value->string;
 	
 	char* value = kv_get(global_store, key);
 	if (value == NULL)
 		return NULL_BULK_STRING;
-	return to_bulk_string(value);
+	return to_response_buffer(to_bulk_string(value));
 }
 
-char* set_command(RespData* key_data, RespData* value_data, RespData* expiration_data, RespData* duration_data) {
+const char* set_command(RespData* key_data, RespData* value_data, RespData* expiration_data, RespData* duration_data) {
 	assert_resp_string(key_data);
 	assert_resp_string(value_data);
 
@@ -94,7 +113,7 @@ char* set_command(RespData* key_data, RespData* value_data, RespData* expiration
 		if (strcmp(expiration_type, "PX") == 0) {
 			kv_set_px(global_store, key, value, duration);
 		} else {
-			return to_simple_error("Unsupported expiration type");
+			return to_response_buffer(to_simple_error("Unsupported expiration type"));
 		}
 
 		return OK_RESPONSE;
@@ -106,7 +125,7 @@ char* set_command(RespData* key_data, RespData* value_data, RespData* expiration
 	return NULL;
 }
 
-char* info_command(RespData* target_data) {
+const char* info_command(RespData* target_data) {
 	assert_resp_string(target_data);
 	char* target = target_data->value->string;
 	to_upper(target);
@@ -118,7 +137,7 @@ char* info_command(RespData* target_data) {
 			sprintf(
 				message, 
 				"# %s\nrole:%s\nconnected_slaves:%d\nmaster_replid:%s\nmaster_repl_offset:%d\n",
-				target, global_server->role, info->connected_slaves, info->replid, info->repl_offset
+				target, global_server->role, info->num_connected_slaves, info->replid, info->repl_offset
 			);
 		} else if (global_server->role == REPLICATION_ROLE_SLAVE) {
 			SlaveRedisInfo* info = global_server->info.slave;
@@ -129,14 +148,14 @@ char* info_command(RespData* target_data) {
 				target, global_server->role
 			);
 		}
-		return to_bulk_string(message);
+		return to_response_buffer(to_bulk_string(message));
 	}
 
-	return to_simple_error("Unsupported info target");
+	return to_response_buffer(to_simple_error("Unsupported info target"));
 }
 
 char* replconf_port = NULL;
-char* replconf_command(RespData* confkey_data, RespData* value_data) {
+const char* replconf_command(RespData* confkey_data, RespData* value_data) {
 	assert_resp_string(confkey_data);
 	assert_resp_string(value_data);
 
@@ -157,12 +176,12 @@ char* replconf_command(RespData* confkey_data, RespData* value_data) {
 		return OK_RESPONSE;
 	}
 
-	return to_simple_error("Unsupported REPLCONF key");
+	return to_response_buffer(to_simple_error("Unsupported REPLCONF key"));
 }
 
-char* psync_command(RespData* master_replid_data, RespData* master_offset_data) {
-	if (strcmp(global_server->role, REPLICATION_ROLE_MASTER) != 0)
-		return to_simple_error("PSYNC command received in replica");
+const char* psync_command(RespData* master_replid_data, RespData* master_offset_data) {
+	if (ami_slave())
+		return to_response_buffer(to_simple_error("PSYNC command received in replica"));
 
 	MasterRedisInfo* info = global_server->info.master;
 
@@ -174,9 +193,20 @@ char* psync_command(RespData* master_replid_data, RespData* master_offset_data) 
 
 	if (strcmp(master_replid, "?") == 0 && strcmp(master_offset, "-1") == 0) {
 		char message[256];
-		sprintf(message, "FULLRESYNC %s %d", info->replid, info->repl_offset); 
-		return to_simple_string(message);
+		sprintf(message, "+FULLRESYNC %s %d\r\n", info->replid, info->repl_offset);
+
+		char response[1280];
+		int rdb_fd = open("data/empty.rdb", 0);
+		if (rdb_fd >= 0) {
+			char buf[1024];
+			ssize_t bytes_read = read(rdb_fd, buf, 1024);
+			sprintf(response, "%s$%d\r\n%s", message, strlen(buf), buf);
+			close(rdb_fd);
+		}
+
+		strcpy(response_buf, response);
+		return response_buf;
 	}
 
-	return to_simple_error("Unsupported PSYNC values");
+	return to_response_buffer(to_simple_error("Unsupported PSYNC values"));
 }

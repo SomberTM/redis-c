@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <ctype.h>
+#include <stdio.h>
 
 #include "utils.h"
 #include "parser.h"
@@ -25,4 +26,16 @@ void assert_resp_string(RespData* data) {
 	assert(data->type == RESP_BULK_STRING || data->type == RESP_SIMPLE_STRING);
 }
 
+void raw_print(char* str) {
+	while (*str) {
+		if (*str == '\r') {
+			printf("\\r");
+		} else if (*str == '\n') {
+			printf("\\n");
+		} else {
+			putchar(*str);
+		}
+		str++;
+	}
+}
 

@@ -1,6 +1,8 @@
 #ifndef SERVER_H
 #define SERVER_H
 
+#include <stdbool.h>
+
 #include "storage.h"
 
 extern const char* REPLICATION_ROLE_MASTER;
@@ -9,9 +11,15 @@ extern const char* REPLICATION_ROLE_SLAVE;
 extern KeyValueStore* global_store;
 
 typedef struct {
+	int port;
+	int fd;
+} ConnectedSlave;
+
+typedef struct {
 	char* replid;
 	int repl_offset;
-	int connected_slaves;
+	int num_connected_slaves;
+	ConnectedSlave** connected_slaves;
 } MasterRedisInfo;
 
 typedef struct {
@@ -41,5 +49,8 @@ SlaveRedisInfo* create_slave_redis_info();
 void free_slave_redis_info(SlaveRedisInfo*);
 
 int connect_replica_to_master(RedisServer*);
+
+bool ami_slave();
+bool ami_master();
 
 #endif /* SERVER_H */
